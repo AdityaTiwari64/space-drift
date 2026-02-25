@@ -5,14 +5,16 @@ type Props = {
     setHandResults: (result: any) => void
 }
 
-let detectionInterval: any;
+let detectionRafId: any;
+const DETECTION_INTERVAL = 42; // ~24fps — fast enough for smooth movement
+
 const HandRecognizer = ({ setHandResults }: Props) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     useEffect(() => {
         initVideoAndModel();
 
         return () => {
-            clearInterval(detectionInterval);
+            cancelAnimationFrame(detectionRafId);
         }
     }, [])
 
@@ -27,10 +29,21 @@ const HandRecognizer = ({ setHandResults }: Props) => {
         await initVideo(videoElement);
 
         const handLandmarker = await initModel();
-        detectionInterval = setInterval(() => {
-            const detections = handLandmarker.detectForVideo(videoElement, Date.now());
-            processDetections(detections, setHandResults);
-        }, 1000/30)
+
+        let lastDetection = 0;
+        const detectLoop = (timestamp: number) => {
+            if (timestamp - lastDetection >= DETECTION_INTERVAL) {
+                lastDetection = timestamp;
+                try {
+                    const detections = handLandmarker.detectForVideo(videoElement, Date.now());
+                    processDetections(detections, setHandResults);
+                } catch (e) {
+                    // skip frame on detection error
+                }
+            }
+            detectionRafId = requestAnimationFrame(detectLoop);
+        };
+        detectionRafId = requestAnimationFrame(detectLoop);
 
         setHandResults({ isLoading: false });
     }
@@ -44,8 +57,9 @@ const HandRecognizer = ({ setHandResults }: Props) => {
 export default HandRecognizer
 
 async function initVideo(videoElement: HTMLVideoElement) {
+    // Lower resolution = faster MediaPipe processing = more responsive
     const stream = await navigator.mediaDevices.getUserMedia({
-        video: true
+        video: { width: 320, height: 240, frameRate: 30 }
     });
     videoElement.srcObject = stream;
     videoElement.addEventListener("loadeddata", () => {
@@ -89,4 +103,3 @@ function processDetections(detections: HandLandmarkerResult, setHandResults: (re
         })
     }
 }
-

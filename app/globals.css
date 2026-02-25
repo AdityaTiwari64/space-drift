@@ -18,12 +18,9 @@
 
 body {
   color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
+  background: linear-gradient(to bottom,
       transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
+      rgb(var(--background-end-rgb))) rgb(var(--background-start-rgb));
 }
 
 @layer utilities {
@@ -33,34 +30,135 @@ body {
 }
 
 @keyframes moveDown {
+  from {
+    transform: translateY(0);
+  }
+
   to {
-    top: 2000px;
+    transform: translateY(2000px);
   }
 }
 
 .boulder-shadow {
-  filter: drop-shadow(10px 10px 5px #00000066);
+  will-change: transform;
+  filter: drop-shadow(5px 5px 3px #00000044);
+  contain: layout style;
 }
+
 .rocket-shadow {
   filter: drop-shadow(3px 3px 2px #00000066);
 }
 
 @keyframes wiggle {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: translateX(0);
   }
+
   25% {
     transform: translateX(-5px);
   }
+
   75% {
     transform: translateX(5px);
   }
 }
 
 .wiggle {
-  animation: wiggle 120;
+  animation: wiggle 120ms ease-in-out infinite;
 }
 
 .social-links-shadow {
   filter: drop-shadow(1px 1px 2px #00000088);
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg) scale(1);
+  }
+
+  50% {
+    transform: rotate(180deg) scale(1.2);
+  }
+
+  to {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+@keyframes timerPulse {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes collectPop {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  100% {
+    transform: scale(2.5);
+    opacity: 0;
+  }
+}
+
+/* Star collect feedback */
+@keyframes collectFloat {
+  0% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateY(-60px);
+    opacity: 0;
+  }
+}
+
+@keyframes collectBurst {
+  0% {
+    transform: scale(0.5);
+    opacity: 1;
+  }
+
+  50% {
+    transform: scale(2);
+    opacity: 0.8;
+  }
+
+  100% {
+    transform: scale(3);
+    opacity: 0;
+  }
+}
+
+.collect-fx {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.collect-points {
+  font-size: 1.2rem;
+  font-weight: 900;
+  color: #facc15;
+  text-shadow: 0 0 10px #facc15, 0 0 20px #f59e0b;
+  animation: collectFloat 0.8s ease-out forwards;
+  position: absolute;
+  white-space: nowrap;
+}
+
+.collect-burst {
+  font-size: 2rem;
+  animation: collectBurst 0.6s ease-out forwards;
 }

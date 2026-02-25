@@ -1,55 +1,43 @@
-import React, { useEffect, useRef, useState } from 'react'
-import Image from 'next/image';
+import React, { useEffect, useRef, useState, forwardRef } from 'react'
 
 type Props = {
     isMoving?: boolean,
-    what: any,
-    soWhat: () => void,
-    when: any
+    speed?: number
 }
 
-const BoulderComponent = ({ isMoving, what, soWhat, when }: Props) => {
-    const [xState, setXState] = useState(0);
-    const [yState, setYState] = useState(0);
-    const [rotation, setRotation] = useState(0)
-    const boulderRef = useRef(null);
+const BoulderComponent = React.memo(forwardRef<HTMLDivElement, Props>(
+    ({ isMoving, speed = 10 }, ref) => {
+        const xRef = useRef(0);
+        const yRef = useRef(0);
+        const rotRef = useRef(0);
+        const [ready, setReady] = useState(false);
 
-    useEffect(() => {
-        // detection logic
-        detectCollision();
-    }, [when])
+        useEffect(() => {
+            xRef.current = Math.random() * (window.innerWidth - 80);
+            yRef.current = -Math.random() * 100 - 100;
+            rotRef.current = Math.random() * 360;
+            setReady(true);
+        }, []);
 
-    const detectCollision = () => {
-        if (boulderRef.current) {
-            const boulder = (boulderRef.current as any).getBoundingClientRect();
-            const didCollide = boulder.left + 30 < what.right &&
-            boulder.right - 30 > what.left && 
-            boulder.bottom - 30 > what.top && 
-            boulder.top + 30 < what.bottom;
-            if (didCollide) {
-                soWhat();
-            }
-        }
+        if (!ready) return null;
+
+        return (
+            <div ref={ref} className='boulder-shadow' style={{
+                position: 'absolute',
+                left: xRef.current,
+                top: yRef.current,
+                animation: `moveDown ${speed}s linear forwards`,
+                animationPlayState: isMoving ? 'running' : 'paused',
+            }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src='/met.png' width={80} height={80} alt='' style={{
+                    rotate: `${rotRef.current}deg`
+                }} />
+            </div>
+        )
     }
-    useEffect(() => {
-        setXState(Math.random() * (window.innerWidth - 80));
-        setYState(- Math.random() * 100 - 100);
-        setRotation(Math.random() * 360);
-    }, [])
+));
 
-    return (
-        <div ref={boulderRef} className='boulder-shadow' style={{
-            position: 'absolute',
-            left: xState,
-            top: yState,
-            animation: 'moveDown 10s linear forwards',
-            animationPlayState: isMoving ? 'running' : 'paused'
-        }}>
-            <Image src={'/met.png'} width={80} height={80} alt={''} style={{
-                rotate: `${rotation}deg`
-            }} />
-        </div>
-    )
-}
+BoulderComponent.displayName = 'BoulderComponent';
 
 export default BoulderComponent
