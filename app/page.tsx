@@ -4,13 +4,12 @@ import GameInfoOverlay from "@/components/GameInfoOverlay";
 import HandRecognizer from "@/components/HandRecognizer";
 import RewardComponent from "@/components/RewardComponent";
 import RocketComponent from "@/components/RocketComponent";
-import { playBackground, playFX, playCollectFX } from "@/utils/audiohandler";
+import { playBackground, playFX, playCollectFX, playGameStartFX, playGameOverFX, playCountdownFX, playWhooshFX, playRareCollectFX } from "@/utils/audiohandler";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 let generationInterval: any;
 let removalInterval: any;
 let rewardInterval: any;
-let distanceInterval: any;
 let timerInterval: any;
 
 const GAME_DURATION = 60;
@@ -18,7 +17,9 @@ const MAX_LIVES = 2;
 const MAX_BOULDERS = 12;
 const MAX_REWARDS = 10;
 const ENTITY_TTL = 10000;
-const COLLISION_INTERVAL = 50; // ms — check collisions at ~20fps, not 60
+const COLLISION_INTERVAL = 50; // ms — check collisions at ~20fps
+const DISTANCE_SYNC_INTERVAL = 2000; // ms — sync distance/points/lives to React state for overlay
+const LERP_SPEED = 0.4; // higher = snappier response (0 = no movement, 1 = instant snap)
 
 let isInvincible = false;
 let livesRemaining: number;
@@ -38,17 +39,16 @@ export default function Home() {
   const [rewards, setRewards] = useState<any[]>([]);
 
   const [isLoading, setIsLoading] = useState(false);
-  const [isColliding, setIsColliding] = useState(false);
   const [distance, setDistance] = useState(0);
   const [points, setPoints] = useState(0);
   const [timeLeft, setTimeLeft] = useState(GAME_DURATION);
   const [livesRemainingState, setLivesRemainingState] = useState(MAX_LIVES);
   const [boulderSpeed, setBoulderSpeed] = useState(10);
   const [highScore, setHighScore] = useState(0);
-  const [collectedRewards, setCollectedRewards] = useState<Set<string>>(new Set());
 
   // ── Refs (avoid state for frequently-updated values) ──────────
   const rocketRef = useRef<HTMLDivElement>(null);
+  const rocketWiggleRef = useRef<HTMLDivElement>(null);
   const distanceRef = useRef(0);
   const pointsRef = useRef(0);
   const rocketLeftRef = useRef(0);       // current visual position
@@ -59,11 +59,14 @@ export default function Home() {
   const boulderRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const rewardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const collectedRef = useRef<Set<string>>(new Set());
+  const rewardRareRef = useRef<Map<string, boolean>>(new Map()); // tracks which rewards are rare
   const degreesRef = useRef(0);   // direct DOM updates — no React state
 
+  // DOM refs for direct text updates (bypass React render for HUD)
+  const distanceDomRef = useRef<HTMLElement | null>(null);
+  const pointsDomRef = useRef<HTMLElement | null>(null);
+
   // Keep refs in sync with state (only for values that ALSO need state)
-  useEffect(() => { distanceRef.current = distance; }, [distance]);
-  useEffect(() => { pointsRef.current = points; }, [points]);
   useEffect(() => { isDetectedRef.current = isDetected; }, [isDetected]);
   useEffect(() => { gamePhaseRef.current = gamePhase; }, [gamePhase]);
 
@@ -88,10 +91,14 @@ export default function Home() {
     setTimeLeft(GAME_DURATION);
     setBoulders([]);
     setRewards([]);
-    setIsColliding(false);
+    // Reset wiggle via DOM
+    if (rocketWiggleRef.current) {
+      rocketWiggleRef.current.classList.remove('wiggle');
+      rocketWiggleRef.current.style.marginTop = '0px';
+    }
     setBoulderSpeed(10);
-    setCollectedRewards(new Set());
     collectedRef.current = new Set();
+    rewardRareRef.current.clear();
     boulderRefs.current.clear();
     rewardRefs.current.clear();
     rocketLeftRef.current = window.innerWidth / 2;
@@ -108,18 +115,32 @@ export default function Home() {
     setPlayerResults([]);
     resetRound();
     setGamePhase('playing');
+    playGameStartFX();
   };
 
   const triggerGameOver = () => {
     const finalPoints = pointsRef.current;
     const finalDistance = distanceRef.current;
+    const finalScore = Math.round(finalDistance * 0.3 + finalPoints * 0.7);
+    // Sync final values to state for the overlay
+    setPoints(finalPoints);
+    setDistance(finalDistance);
+    setLivesRemainingState(livesRemaining);
     setPlayerResults(prev => [...prev, { points: finalPoints, distance: finalDistance }]);
     setHighScore(prev => {
-      const newHigh = Math.max(prev, finalPoints);
+      const newHigh = Math.max(prev, finalScore);
       localStorage.setItem('meteorDashHighScore', String(newHigh));
       return newHigh;
     });
+    // Save to leaderboard
+    try {
+      const lb = JSON.parse(localStorage.getItem('meteorDashLeaderboard') || '[]');
+      lb.push({ name: 'Anonymous', score: finalScore, points: finalPoints, distance: finalDistance, date: new Date().toLocaleDateString() });
+      lb.sort((a: any, b: any) => b.score - a.score);
+      localStorage.setItem('meteorDashLeaderboard', JSON.stringify(lb.slice(0, 10)));
+    } catch { }
     setGamePhase('gameover');
+    playGameOverFX();
   };
 
   const handlePlayAgain = () => { resetRound(); setGamePhase('playing'); };
@@ -131,88 +152,140 @@ export default function Home() {
   };
   const handleShowResults = () => setGamePhase('results');
 
-  // ── Collision handler (uses refs to avoid stale closures) ──────
   const collisionHandler = useCallback(() => {
     if (!isInvincible && gamePhaseRef.current === 'playing') {
       isInvincible = true;
-      setIsColliding(true);
+      // ALL visual updates via direct DOM — ZERO React re-renders during collision
+      if (rocketWiggleRef.current) {
+        rocketWiggleRef.current.classList.add('wiggle');
+        rocketWiggleRef.current.style.marginTop = '7px';
+      }
       playFX();
       livesRemaining--;
-      setLivesRemainingState(livesRemaining);
+      // Don't call setLivesRemainingState here — the game loop syncs it periodically
       if (livesRemaining <= 0) triggerGameOver();
-      setTimeout(() => { isInvincible = false; setIsColliding(false); }, 1500);
+      setTimeout(() => {
+        isInvincible = false;
+        if (rocketWiggleRef.current) {
+          rocketWiggleRef.current.classList.remove('wiggle');
+          rocketWiggleRef.current.style.marginTop = '0px';
+        }
+      }, 1500);
     }
   }, []);
 
-  const handleRewardCollect = useCallback((key: string) => {
+  const handleRewardCollect = useCallback((key: string, isRare?: boolean) => {
     if (collectedRef.current.has(key)) return; // already collected
     collectedRef.current.add(key);
-    setCollectedRewards(prev => {
-      const next = new Set(prev);
-      next.add(key);
-      return next;
-    });
-    setPoints(prev => prev + 10);
-    playCollectFX();
+    pointsRef.current += isRare ? 50 : 10;
+    // Hide the element immediately via DOM — no React re-render needed
+    const el = rewardRefs.current.get(key);
+    if (el) el.style.display = 'none';
+    if (isRare) {
+      playRareCollectFX();
+    } else {
+      playCollectFX();
+    }
   }, []);
 
-  // ── Centralized collision detection (throttled to ~20fps) ─────
+  // ── UNIFIED GAME LOOP — single RAF for movement + collisions ──
   useEffect(() => {
-    if (gamePhase !== 'playing' || !isDetected) return;
-
     let rafId: number;
-    let lastCheck = 0;
+    let lastCollisionCheck = 0;
+    let lastDistanceSync = 0;
+    let lastDistanceTick = 0;
 
-    const checkCollisions = (timestamp: number) => {
-      // Throttle: only check every COLLISION_INTERVAL ms
-      if (timestamp - lastCheck < COLLISION_INTERVAL) {
-        rafId = requestAnimationFrame(checkCollisions);
-        return;
+    const gameLoop = (timestamp: number) => {
+      // ── 1. Smooth rocket interpolation (runs every frame) ──
+      const diff = rocketTargetRef.current - rocketLeftRef.current;
+      if (Math.abs(diff) > 0.5) {
+        rocketLeftRef.current += diff * LERP_SPEED;
       }
-      lastCheck = timestamp;
-
-      const rocketEl = rocketRef.current;
-      if (!rocketEl) {
-        rafId = requestAnimationFrame(checkCollisions);
-        return;
+      // Always assert position via style.left (immune to CSS animation conflicts)
+      if (rocketRef.current) {
+        rocketRef.current.style.left = `${rocketLeftRef.current}px`;
       }
 
-      const rocket = rocketEl.getBoundingClientRect();
-
-      // Check boulders
-      boulderRefs.current.forEach((el) => {
-        if (!el) return;
-        const b = el.getBoundingClientRect();
-        if (
-          b.left + 30 < rocket.right &&
-          b.right - 30 > rocket.left &&
-          b.bottom - 30 > rocket.top &&
-          b.top + 30 < rocket.bottom
-        ) {
-          collisionHandler();
+      // ── 2. Distance counter (every 250ms via ref — no React state) ──
+      if (isDetectedRef.current && gamePhaseRef.current === 'playing') {
+        if (timestamp - lastDistanceTick >= 250) {
+          lastDistanceTick = timestamp;
+          distanceRef.current += 1;
         }
-      });
+      }
 
-      // Check rewards
-      rewardRefs.current.forEach((el, key) => {
-        if (!el || collectedRef.current.has(key)) return;
-        const r = el.getBoundingClientRect();
-        if (
-          r.left + 10 < rocket.right &&
-          r.right - 10 > rocket.left &&
-          r.bottom - 10 > rocket.top &&
-          r.top + 10 < rocket.bottom
-        ) {
-          handleRewardCollect(key);
+      // ── 3. Sync distance/points to React state every ~2s (for overlay display) ──
+      if (timestamp - lastDistanceSync >= DISTANCE_SYNC_INTERVAL) {
+        lastDistanceSync = timestamp;
+        if (gamePhaseRef.current === 'playing') {
+          setDistance(distanceRef.current);
+          setPoints(pointsRef.current);
+          setLivesRemainingState(livesRemaining);
         }
-      });
+      }
 
-      rafId = requestAnimationFrame(checkCollisions);
+      // ── 4. Collision detection (throttled to ~20fps) ──
+      if (timestamp - lastCollisionCheck >= COLLISION_INTERVAL) {
+        lastCollisionCheck = timestamp;
+
+        if (isDetectedRef.current && gamePhaseRef.current === 'playing') {
+          const rocketEl = rocketRef.current;
+          if (rocketEl) {
+            const rocket = rocketEl.getBoundingClientRect();
+            const rocketTop = rocket.top;
+            const rocketBottom = rocket.bottom;
+            const rocketLeft = rocket.left;
+            const rocketRight = rocket.right;
+
+            // Check boulders
+            boulderRefs.current.forEach((el) => {
+              if (!el) return;
+              const b = el.getBoundingClientRect();
+              // Early exit: skip if clearly out of range
+              if (b.bottom < rocketTop - 50 || b.top > rocketBottom + 50) return;
+              if (b.right < rocketLeft - 50 || b.left > rocketRight + 50) return;
+              if (
+                b.left + 30 < rocketRight &&
+                b.right - 30 > rocketLeft &&
+                b.bottom - 30 > rocketTop &&
+                b.top + 30 < rocketBottom
+              ) {
+                collisionHandler();
+              } else if (
+                // Near-miss detection: boulder is close but didn't hit
+                b.bottom > rocketTop - 20 && b.top < rocketBottom + 20 &&
+                Math.abs((b.left + b.right) / 2 - (rocketLeft + rocketRight) / 2) < 80
+              ) {
+                playWhooshFX();
+              }
+            });
+
+            // Check rewards
+            rewardRefs.current.forEach((el, key) => {
+              if (!el || collectedRef.current.has(key)) return;
+              const r = el.getBoundingClientRect();
+              // Early exit: skip if clearly out of range
+              if (r.bottom < rocketTop - 30 || r.top > rocketBottom + 30) return;
+              if (r.right < rocketLeft - 30 || r.left > rocketRight + 30) return;
+              if (
+                r.left + 10 < rocketRight &&
+                r.right - 10 > rocketLeft &&
+                r.bottom - 10 > rocketTop &&
+                r.top + 10 < rocketBottom
+              ) {
+                handleRewardCollect(key, rewardRareRef.current.get(key));
+              }
+            });
+          }
+        }
+      }
+
+      rafId = requestAnimationFrame(gameLoop);
     };
 
-    rafId = requestAnimationFrame(checkCollisions);
+    rafId = requestAnimationFrame(gameLoop);
     return () => cancelAnimationFrame(rafId);
-  }, [gamePhase, isDetected, collisionHandler, handleRewardCollect]);
+  }, [collisionHandler, handleRewardCollect]);
 
   // ── Difficulty ────────────────────────────────────────────────
   useEffect(() => {
@@ -220,20 +293,14 @@ export default function Home() {
     setBoulderSpeed(Math.max(3, 10 - Math.floor(distance / 50)));
   }, [distance, gamePhase, isDetected]);
 
-  // ── Distance counter ─────────────────────────────────────────
-  useEffect(() => {
-    if (isDetected && gamePhase === 'playing') {
-      distanceInterval = setInterval(() => setDistance(prev => prev + 1), 250);
-    }
-    return () => clearInterval(distanceInterval);
-  }, [isDetected, gamePhase]);
-
   // ── 60-second countdown ───────────────────────────────────────
   useEffect(() => {
     if (isDetected && gamePhase === 'playing') {
       timerInterval = setInterval(() => {
         setTimeLeft(prev => {
           if (prev <= 1) { clearInterval(timerInterval); triggerGameOver(); return 0; }
+          // Countdown tick in the last 10 seconds for urgency
+          if (prev <= 11) playCountdownFX(prev - 1);
           return prev - 1;
         });
       }, 1000);
@@ -247,9 +314,9 @@ export default function Home() {
       generationInterval = setInterval(() => {
         const count = Math.min(8, 2 + Math.floor(distanceRef.current / 150));
         setBoulders(prev => {
-          let arr = [...prev];
+          const arr = [...prev];
+          const now = Date.now();
           for (let i = 0; i < count; i++) {
-            const now = Date.now();
             arr.push({ timestamp: now, key: `b-${now}-${Math.random()}` });
           }
           if (arr.length > MAX_BOULDERS) {
@@ -292,15 +359,19 @@ export default function Home() {
             const sectionWidth = window.innerWidth / count;
             const xOffset = sectionWidth * i + Math.random() * (sectionWidth - 60);
             const yOffset = -Math.random() * 100 - (i * 80);
+            const isRare = Math.random() < 0.1; // ~10% chance of rare red star
             return {
               key: `r-${now}-${i}-${Math.random()}`,
               timestamp: now,
               xOffset,
-              yOffset
+              yOffset,
+              isRare,
             };
           });
           setRewards(prev => {
-            let arr = [...prev, ...newRewards];
+            const arr = [...prev, ...newRewards];
+            // Track rare flags in ref
+            newRewards.forEach(r => { if (r.isRare) rewardRareRef.current.set(r.key, true); });
             if (arr.length > MAX_REWARDS) {
               const removed = arr.splice(0, arr.length - MAX_REWARDS);
               removed.forEach(r => rewardRefs.current.delete(r.key));
@@ -343,25 +414,6 @@ export default function Home() {
     return cb;
   }, []);
 
-  // ── 60fps smooth interpolation loop for rocket movement ───────
-  useEffect(() => {
-    let smoothRafId: number;
-    const LERP_SPEED = 0.25; // 0 = no movement, 1 = instant snap
-
-    const smoothLoop = () => {
-      const diff = rocketTargetRef.current - rocketLeftRef.current;
-      if (Math.abs(diff) > 0.5) {
-        rocketLeftRef.current += diff * LERP_SPEED;
-        if (rocketRef.current) {
-          rocketRef.current.style.left = `${rocketLeftRef.current}px`;
-        }
-      }
-      smoothRafId = requestAnimationFrame(smoothLoop);
-    };
-    smoothRafId = requestAnimationFrame(smoothLoop);
-    return () => cancelAnimationFrame(smoothRafId);
-  }, []);
-
   const setHandResults = useCallback((result: any) => {
     if (result.isLoading !== undefined) setIsLoading(result.isLoading);
     if (result.isDetected !== undefined && result.isDetected !== isDetectedRef.current) {
@@ -379,9 +431,9 @@ export default function Home() {
       }
     }
 
-    // Set TARGET position — the 60fps smooth loop will lerp toward it
+    // Set TARGET position — the unified game loop will spring toward it
     if (result.degrees && result.degrees !== 0) {
-      const newTarget = rocketTargetRef.current - result.degrees / 6;
+      const newTarget = rocketTargetRef.current - result.degrees / 4;
       if (newTarget >= 20 && newTarget <= window.innerWidth - 52) {
         rocketTargetRef.current = newTarget;
       }
@@ -397,16 +449,21 @@ export default function Home() {
       <div className={`absolute left-3 top-3 z-30 transition-all duration-500 ${isDetected ? 'w-24' : 'w-48'}`}>
         <HandRecognizer setHandResults={setHandResults} />
       </div>
-      <div ref={rocketRef} id='rocket-container' className={`${isInvincible && 'wiggle'}`} style={{
+      <div ref={rocketRef} id='rocket-container' style={{
         position: "absolute",
-        marginTop: `${isInvincible ? '507px' : '500px'}`
+        left: '50%',
+        marginTop: '500px',
+        transform: 'translateZ(0)',
+        backfaceVisibility: 'hidden' as any,
       }}>
-        <RocketComponent degrees={0} />
+        <div ref={rocketWiggleRef}>
+          <RocketComponent degrees={0} />
+        </div>
       </div>
 
       {/* Boulders */}
       {gamePhase === 'playing' && (
-        <div className="absolute z-10 h-screen w-screen overflow-hidden pointer-events-none" style={{ contain: 'layout style paint' }}>
+        <div className="absolute z-10 h-screen w-screen overflow-hidden pointer-events-none" style={{ contain: 'strict' }}>
           {boulders.map(b => (
             <BoulderComponent key={b.key} ref={getBoulderRef(b.key)}
               isMoving={isDetected} speed={boulderSpeed} />
@@ -416,18 +473,18 @@ export default function Home() {
 
       {/* Rewards */}
       {gamePhase === 'playing' && (
-        <div className="absolute z-20 h-screen w-screen overflow-hidden pointer-events-none" style={{ contain: 'layout style paint' }}>
+        <div className="absolute z-20 h-screen w-screen overflow-hidden pointer-events-none" style={{ contain: 'strict' }}>
           {rewards.map(r => (
             <RewardComponent key={r.key} ref={getRewardRef(r.key)} id={r.key}
-              isMoving={isDetected} collected={collectedRewards.has(r.key)}
-              xOffset={r.xOffset} yOffset={r.yOffset} />
+              isMoving={isDetected} collected={collectedRef.current.has(r.key)}
+              xOffset={r.xOffset} yOffset={r.yOffset} isRare={r.isRare} />
           ))}
         </div>
       )}
 
       <GameInfoOverlay info={{
         gamePhase, gameMode, playerCount, currentPlayer, playerResults,
-        isLoading, isDetected, isColliding, distance, points, timeLeft,
+        isLoading, isDetected, distance, points, timeLeft,
         livesRemainingState, highScore,
         onStartSolo: () => startGame('solo', 1),
         onStartMulti: (count: number) => startGame('multi', count),

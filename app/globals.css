@@ -41,12 +41,15 @@ body {
 
 .boulder-shadow {
   will-change: transform;
-  filter: drop-shadow(5px 5px 3px #00000044);
-  contain: layout style;
+  contain: layout style paint;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .rocket-shadow {
-  filter: drop-shadow(3px 3px 2px #00000066);
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 @keyframes wiggle {
@@ -75,15 +78,11 @@ body {
 
 @keyframes spin {
   from {
-    transform: rotate(0deg) scale(1);
-  }
-
-  50% {
-    transform: rotate(180deg) scale(1.2);
+    transform: rotate(0deg);
   }
 
   to {
-    transform: rotate(360deg) scale(1);
+    transform: rotate(360deg);
   }
 }
 

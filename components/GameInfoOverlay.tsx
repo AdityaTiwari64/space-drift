@@ -1,5 +1,5 @@
 import { Loader2, RocketIcon, TrophyIcon, TimerIcon, StarIcon, PlayIcon, UsersIcon, UserIcon, HelpCircleIcon, XIcon } from 'lucide-react';
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import SocialMediaLinks from './SocialLinks';
 
 type Props = { info: any }
@@ -7,22 +7,62 @@ type Props = { info: any }
 const PLAYER_COLORS = ['#60a5fa', '#f472b6', '#34d399']; // blue, pink, green
 const PLAYER_LABELS = ['Player 1', 'Player 2', 'Player 3'];
 
+type LeaderboardEntry = { name: string; score: number; points: number; distance: number; date: string };
+
+// Weighted score: 30% distance + 70% points
+function computeScore(distance: number, points: number): number {
+    return Math.round(distance * 0.3 + points * 0.7);
+}
+
+function getLeaderboard(): LeaderboardEntry[] {
+    try {
+        return JSON.parse(localStorage.getItem('meteorDashLeaderboard') || '[]').slice(0, 5);
+    } catch { return []; }
+}
+
+// ── Leaderboard Panel (top-right corner) ─────────────────────
+const LeaderboardPanel = () => {
+    const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
+    useEffect(() => { setEntries(getLeaderboard()); }, []);
+
+    if (entries.length === 0) return null;
+    const medals = ['🥇', '🥈', '🥉', '4', '5'];
+
+    return (
+        <div className='fixed top-4 right-6 z-40 flex flex-col gap-1.5 min-w-[200px]'>
+            <div className='text-[10px] font-black tracking-[0.2em] text-yellow-400/70 uppercase text-center'>🏆 Leaderboard</div>
+            {entries.map((e, i) => (
+                <div key={i} className='flex items-center gap-2.5 px-3 py-1.5 rounded-lg bg-black/60 border border-white/10 backdrop-blur-sm text-xs'>
+                    <span className='w-5 text-center'>{medals[i]}</span>
+                    <span className='flex-1 text-white/80 font-semibold truncate'>{e.name || 'Anonymous'}</span>
+                    <span className='text-yellow-300 font-bold'>{e.score}</span>
+                </div>
+            ))}
+        </div>
+    );
+};
+
 const GameInfoOverlay = ({ info }: Props) => {
     const {
         gamePhase, gameMode, playerCount, currentPlayer, playerResults,
-        isLoading, isDetected, isColliding, distance, points, timeLeft,
+        isLoading, isDetected, distance, points, timeLeft,
         livesRemainingState, highScore,
         onStartSolo, onStartMulti, onPlayAgain, onBackToMenu, onNextPlayer, onShowResults,
     } = info;
 
     const [showInstructions, setShowInstructions] = useState(false);
     const [pendingStartAction, setPendingStartAction] = useState<(() => void) | null>(null);
+    // Username prompt state
+    const [showNamePrompt, setShowNamePrompt] = useState(false);
+    const [username, setUsername] = useState('');
+    const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
 
     const lives = Array.from({ length: livesRemainingState }, (_, i) =>
         <RocketIcon key={i} size={20} className='fill-red-600' />
     );
     const timerColor = timeLeft <= 10 ? 'text-red-400 animate-pulse' : 'text-green-300';
     const isLastPlayer = currentPlayer >= playerCount - 1;
+    const currentScore = computeScore(distance, points);
 
     const handleStartWithInstructions = (startFn: () => void) => {
         setPendingStartAction(() => startFn);
@@ -37,7 +77,67 @@ const GameInfoOverlay = ({ info }: Props) => {
         }
     };
 
-    // ── INSTRUCTIONS MODAL (wide horizontal layout) ───────────────
+    // Handle game over actions — show name prompt first
+    const handleGameOverAction = (action: () => void) => {
+        setShowNamePrompt(true);
+        setPendingAction(() => action);
+    };
+
+    const submitName = (name: string) => {
+        // Update the most recent leaderboard entry with the chosen name
+        try {
+            const lb: LeaderboardEntry[] = JSON.parse(localStorage.getItem('meteorDashLeaderboard') || '[]');
+            // Find the latest entry (first one that has no name or default name)
+            if (lb.length > 0) {
+                // The most recently added entry is the one with matching score
+                const finalScore = computeScore(distance, points);
+                const idx = lb.findIndex(e => e.score === finalScore && (!e.name || e.name === 'Anonymous'));
+                if (idx >= 0) {
+                    lb[idx].name = name || 'Anonymous';
+                    localStorage.setItem('meteorDashLeaderboard', JSON.stringify(lb));
+                }
+            }
+        } catch { }
+        setShowNamePrompt(false);
+        setUsername('');
+        if (pendingAction) {
+            pendingAction();
+            setPendingAction(null);
+        }
+    };
+
+    // ── USERNAME PROMPT MODAL ─────────────────────────────────────
+    const namePromptModal = showNamePrompt && (
+        <div className='fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm'>
+            <div className='flex flex-col items-center gap-4 bg-black/90 px-10 py-8 rounded-2xl border border-white/20 shadow-2xl backdrop-blur-md max-w-sm w-full mx-6'>
+                <div className='text-3xl'>🏆</div>
+                <h3 className='text-xl font-black tracking-widest text-white'>SAVE YOUR SCORE</h3>
+                <p className='text-white/50 text-sm text-center'>Enter your name for the leaderboard, or stay anonymous</p>
+                <input
+                    type='text'
+                    maxLength={15}
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') submitName(username); }}
+                    placeholder='Your name...'
+                    autoFocus
+                    className='w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white text-center font-bold text-lg placeholder:text-white/30 focus:outline-none focus:border-yellow-400/50 focus:ring-1 focus:ring-yellow-400/30 transition-all'
+                />
+                <div className='flex gap-3 w-full'>
+                    <button onClick={() => submitName(username)}
+                        className='flex-1 bg-yellow-500 hover:bg-yellow-400 active:scale-95 transition-all px-4 py-2.5 rounded-xl font-bold text-black shadow-lg'>
+                        Save ✨
+                    </button>
+                    <button onClick={() => submitName('Anonymous')}
+                        className='flex-1 bg-white/10 hover:bg-white/20 active:scale-95 transition-all px-4 py-2.5 rounded-xl font-semibold text-white/70 border border-white/20'>
+                        Anonymous
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+
+    // ── INSTRUCTIONS MODAL ────────────────────────────────────────
     const instructionsModal = showInstructions && (
         <div className='fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm' onClick={handleDismissInstructions}>
             <div className='relative flex flex-col gap-5 bg-black/90 px-12 py-8 rounded-3xl border border-white/20 shadow-2xl backdrop-blur-md max-w-3xl w-full mx-6' onClick={e => e.stopPropagation()}>
@@ -57,11 +157,11 @@ const GameInfoOverlay = ({ info }: Props) => {
                     </div>
                     <div className='flex items-start gap-3 bg-white/5 px-4 py-3 rounded-xl border border-white/10'>
                         <span className='text-xl mt-0.5'>⭐</span>
-                        <div><span className='font-bold text-white'>Collect Stars</span><br />Grab falling stars for <span className='text-yellow-300 font-bold'>+10 points</span> each.</div>
+                        <div><span className='font-bold text-white'>Collect Stars</span><br />⭐ = <span className='text-yellow-300 font-bold'>+10 pts</span> | 🌟 Rare = <span className='text-red-400 font-bold'>+50 pts</span></div>
                     </div>
                     <div className='flex items-start gap-3 bg-white/5 px-4 py-3 rounded-xl border border-white/10'>
-                        <span className='text-xl mt-0.5'>⏱️</span>
-                        <div><span className='font-bold text-white'>Survive 60s</span><br />Game lasts 60 seconds. Difficulty rises!</div>
+                        <span className='text-xl mt-0.5'>🏆</span>
+                        <div><span className='font-bold text-white'>Score</span><br />Final score = <span className='text-cyan-300 font-bold'>30% distance</span> + <span className='text-yellow-300 font-bold'>70% stars</span></div>
                     </div>
                     <div className='col-span-2 flex items-start gap-3 bg-white/5 px-4 py-3 rounded-xl border border-white/10'>
                         <span className='text-xl mt-0.5'>⏸️</span>
@@ -81,6 +181,7 @@ const GameInfoOverlay = ({ info }: Props) => {
         return (
             <>
                 {instructionsModal}
+                <LeaderboardPanel />
                 <div className='absolute z-30 h-screen w-screen flex items-center justify-center'>
                     <div className='flex flex-col items-center gap-6 bg-black/75 px-14 py-12 rounded-3xl border border-white/20 shadow-2xl backdrop-blur-md'>
                         <div className='text-5xl'>☄️</div>
@@ -113,6 +214,7 @@ const GameInfoOverlay = ({ info }: Props) => {
                                 </button>
                             </div>
                         </div>
+
                         <p className='text-white/60 text-lg font-bold tracking-widest'>Developed By Aditya Tiwari</p>
                     </div>
                 </div>
@@ -123,10 +225,10 @@ const GameInfoOverlay = ({ info }: Props) => {
     // ── RESULTS ──────────────────────────────────────────────────
     if (gamePhase === 'results') {
         const sorted = [...playerResults]
-            .map((r, i) => ({ ...r, playerIdx: i }))
-            .sort((a, b) => b.points - a.points);
-        const topScore = sorted[0]?.points ?? 0;
-        const isTie = sorted.length > 1 && sorted[0].points === sorted[1].points && topScore > 0;
+            .map((r: any, i: number) => ({ ...r, playerIdx: i, score: computeScore(r.distance, r.points) }))
+            .sort((a: any, b: any) => b.score - a.score);
+        const topScore = sorted[0]?.score ?? 0;
+        const isTie = sorted.length > 1 && sorted[0].score === sorted[1].score && topScore > 0;
 
         const medals = ['🥇', '🥈', '🥉'];
 
@@ -136,7 +238,7 @@ const GameInfoOverlay = ({ info }: Props) => {
                     <h2 className='text-3xl font-black tracking-widest text-white'>🏁 FINAL RESULTS</h2>
 
                     <div className='w-full flex flex-col gap-3 mt-1'>
-                        {sorted.map((r, rank) => {
+                        {sorted.map((r: any, rank: number) => {
                             const isWinner = rank === 0 && !isTie;
                             const color = PLAYER_COLORS[r.playerIdx] ?? '#fff';
                             return (
@@ -149,8 +251,8 @@ const GameInfoOverlay = ({ info }: Props) => {
                                         {isWinner && <span className='text-xs bg-yellow-400 text-black px-2 py-0.5 rounded-full font-black'>WINNER!</span>}
                                     </div>
                                     <div className='text-right'>
-                                        <div className='text-yellow-300 font-bold text-lg'>⭐ {r.points} pts</div>
-                                        <div className='text-white/50 text-xs'>🚀 {r.distance} m</div>
+                                        <div className='text-white font-black text-lg'>🏆 {r.score}</div>
+                                        <div className='text-white/50 text-xs'>⭐ {r.points} pts • 🚀 {r.distance} m</div>
                                     </div>
                                 </div>
                             );
@@ -172,6 +274,7 @@ const GameInfoOverlay = ({ info }: Props) => {
     }
 
     // ── GAME OVER CARD ───────────────────────────────────────────
+    const finalScore = computeScore(distance, points);
     const gameOverCard = gamePhase === 'gameover' && (
         <div className='flex flex-col items-center gap-4 bg-black/75 px-10 py-8 rounded-2xl border border-white/20 shadow-2xl backdrop-blur-sm'>
             <div className='text-3xl font-extrabold text-red-500 animate-pulse'>GAME OVER</div>
@@ -182,12 +285,8 @@ const GameInfoOverlay = ({ info }: Props) => {
                 </div>
             )}
             <div className='flex flex-col items-center gap-2 mt-1 w-full'>
-                <div className='flex items-center gap-2 text-xl font-bold text-white'>
-                    <StarIcon size={22} className='text-yellow-300 fill-yellow-300' />
-                    Points: <span className='text-yellow-300 ml-1'>{points}</span>
-                </div>
-                <div className='text-base font-semibold text-white/80'>
-                    🚀 Distance: <span className='text-cyan-300'>{distance}</span>
+                <div className='flex items-center gap-2 text-2xl font-black text-white'>
+                    🏆 Score: <span className='text-yellow-300'>{finalScore}</span>
                 </div>
                 <div className='flex items-center gap-2 text-sm font-bold text-white border-t border-white/20 pt-2 mt-1 w-full justify-center'>
                     <TrophyIcon size={16} className='text-yellow-400' />
@@ -198,22 +297,22 @@ const GameInfoOverlay = ({ info }: Props) => {
             <div className='flex gap-3 mt-1 w-full'>
                 {gameMode === 'solo' ? (
                     <>
-                        <button onClick={onPlayAgain}
+                        <button onClick={() => handleGameOverAction(onPlayAgain)}
                             className='flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 active:scale-95 transition-all px-4 py-2 rounded-xl font-bold text-white shadow-lg'>
                             <PlayIcon size={15} /> Play Again
                         </button>
-                        <button onClick={onBackToMenu}
+                        <button onClick={() => handleGameOverAction(onBackToMenu)}
                             className='px-4 py-2 rounded-xl font-semibold text-white/60 border border-white/20 hover:bg-white/10 transition-all text-sm'>
                             Menu
                         </button>
                     </>
                 ) : isLastPlayer ? (
-                    <button onClick={onShowResults}
+                    <button onClick={() => handleGameOverAction(onShowResults)}
                         className='flex-1 flex items-center justify-center gap-2 bg-yellow-500 hover:bg-yellow-400 active:scale-95 transition-all px-4 py-2 rounded-xl font-bold text-black shadow-lg'>
                         <TrophyIcon size={15} /> See Results →
                     </button>
                 ) : (
-                    <button onClick={() => onNextPlayer(currentPlayer + 1)}
+                    <button onClick={() => handleGameOverAction(() => onNextPlayer(currentPlayer + 1))}
                         className='flex-1 flex items-center justify-center gap-2 active:scale-95 transition-all px-4 py-2 rounded-xl font-bold text-white shadow-lg'
                         style={{ background: PLAYER_COLORS[currentPlayer + 1] ?? '#ec4899' }}>
                         <PlayIcon size={15} /> {PLAYER_LABELS[currentPlayer + 1]}&apos;s Turn →
@@ -226,7 +325,7 @@ const GameInfoOverlay = ({ info }: Props) => {
 
     // ── IN-GAME / PAUSED ─────────────────────────────────────────
     return (
-        <div className={`absolute z-30 h-screen w-screen flex items-center justify-center ${isColliding && 'border-[20px] border-red-600'}`}>
+        <div className='absolute z-30 h-screen w-screen flex items-center justify-center'>
             {isLoading && <Loader2 size={80} className='animate-spin' />}
 
             {!isLoading && !isDetected && gamePhase === 'playing' && (
@@ -237,6 +336,7 @@ const GameInfoOverlay = ({ info }: Props) => {
             )}
 
             {gameOverCard}
+            {namePromptModal}
 
             {/* Top-right HUD */}
             {gamePhase === 'playing' && (
@@ -251,10 +351,13 @@ const GameInfoOverlay = ({ info }: Props) => {
                         <TimerIcon size={18} />
                         {String(Math.floor(timeLeft / 60)).padStart(2, '0')}:{String(timeLeft % 60).padStart(2, '0')}
                     </div>
-                    <div className='flex items-center gap-1 text-sm font-semibold text-yellow-300'>
-                        <StarIcon size={16} className='fill-yellow-300' /> {points} pts
+                    <div className='flex items-center gap-1.5 text-lg font-black text-white'>
+                        🏆 {currentScore}
                     </div>
-                    <div className='text-sm font-semibold text-white/70'>Dist: {distance}</div>
+                    <div className='flex items-center gap-1 text-xs font-semibold text-yellow-300'>
+                        <StarIcon size={14} className='fill-yellow-300' /> {points} pts
+                    </div>
+                    <div className='text-xs font-semibold text-white/50'>🚀 {distance} m</div>
                     <div className='flex flex-row gap-1'>{lives}</div>
                     <div className='flex items-center gap-1 text-xs text-yellow-400/70'>
                         <TrophyIcon size={13} /> Best: {highScore}

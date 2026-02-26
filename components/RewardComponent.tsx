@@ -1,5 +1,5 @@
 'use client'
-import React, { useEffect, useState, forwardRef } from 'react'
+import React, { useEffect, useState, useMemo, forwardRef } from 'react'
 
 type Props = {
     isMoving?: boolean,
@@ -7,18 +7,15 @@ type Props = {
     xOffset?: number,
     yOffset?: number,
     collected?: boolean,
+    isRare?: boolean,
 }
 
 const RewardComponent = React.memo(forwardRef<HTMLDivElement, Props>(
-    ({ isMoving, id, xOffset, yOffset, collected }, ref) => {
-        const [xState, setXState] = useState(0);
-        const [yState, setYState] = useState(0);
+    ({ isMoving, id, xOffset, yOffset, collected, isRare }, ref) => {
+        // Compute positions synchronously — no mount→setState→re-render cycle
+        const x = useMemo(() => xOffset !== undefined ? xOffset : Math.random() * (window.innerWidth - 80), [xOffset]);
+        const y = useMemo(() => yOffset !== undefined ? yOffset : -Math.random() * 60 - 60, [yOffset]);
         const [showCollectFX, setShowCollectFX] = useState(false);
-
-        useEffect(() => {
-            setXState(xOffset !== undefined ? xOffset : Math.random() * (window.innerWidth - 80));
-            setYState(yOffset !== undefined ? yOffset : -Math.random() * 60 - 60);
-        }, [xOffset, yOffset]);
 
         // Trigger collect animation when collected becomes true
         useEffect(() => {
@@ -32,15 +29,17 @@ const RewardComponent = React.memo(forwardRef<HTMLDivElement, Props>(
             return (
                 <div style={{
                     position: 'absolute',
-                    left: xState,
-                    top: yState,
+                    left: x,
+                    top: y,
                     animation: 'moveDown 8s linear forwards',
                     animationPlayState: isMoving ? 'running' : 'paused',
                     zIndex: 25,
                     pointerEvents: 'none',
                 }}>
                     <div className='collect-fx'>
-                        <span className='collect-points'>+10</span>
+                        <span className='collect-points' style={isRare ? { color: '#ef4444', textShadow: '0 0 10px #ef4444, 0 0 20px #dc2626' } : undefined}>
+                            {isRare ? '+50' : '+10'}
+                        </span>
                         <span className='collect-burst'>✨</span>
                     </div>
                 </div>
@@ -54,22 +53,38 @@ const RewardComponent = React.memo(forwardRef<HTMLDivElement, Props>(
                 ref={ref}
                 style={{
                     position: 'absolute',
-                    left: xState,
-                    top: yState,
+                    left: x,
+                    top: y,
                     animation: 'moveDown 8s linear forwards',
                     animationPlayState: isMoving ? 'running' : 'paused',
-                    zIndex: 15,
+                    zIndex: isRare ? 18 : 15,
                     willChange: 'transform',
+                    contain: 'layout style paint' as any,
                 }}
             >
                 <div style={{
-                    fontSize: '3.5rem',
-                    animation: 'spin 1.5s linear infinite',
-                    filter: 'drop-shadow(0 0 10px gold)',
+                    fontSize: isRare ? '4rem' : '3.5rem',
+                    animation: isRare ? 'spin 0.8s linear infinite' : 'spin 1.5s linear infinite',
                     userSelect: 'none',
+                    backfaceVisibility: 'hidden',
                 }}>
-                    ⭐
+                    {isRare ? '🌟' : '⭐'}
                 </div>
+                {isRare && (
+                    <div style={{
+                        position: 'absolute',
+                        bottom: -8,
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        fontSize: '0.6rem',
+                        fontWeight: 900,
+                        color: '#ef4444',
+                        textShadow: '0 0 6px #ef4444',
+                        whiteSpace: 'nowrap',
+                    }}>
+                        +50
+                    </div>
+                )}
             </div>
         )
     }

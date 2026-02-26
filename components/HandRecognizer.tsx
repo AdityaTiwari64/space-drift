@@ -6,7 +6,7 @@ type Props = {
 }
 
 let detectionRafId: any;
-const DETECTION_INTERVAL = 42; // ~24fps — fast enough for smooth movement
+const DETECTION_INTERVAL = 33; // ~30fps — fast enough for smooth, responsive movement
 
 const HandRecognizer = ({ setHandResults }: Props) => {
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -59,7 +59,7 @@ export default HandRecognizer
 async function initVideo(videoElement: HTMLVideoElement) {
     // Lower resolution = faster MediaPipe processing = more responsive
     const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 320, height: 240, frameRate: 30 }
+        video: { width: 240, height: 180, frameRate: 30 }
     });
     videoElement.srcObject = stream;
     videoElement.addEventListener("loadeddata", () => {
